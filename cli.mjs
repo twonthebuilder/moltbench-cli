@@ -87,6 +87,11 @@ export async function runCli(
   try {
     const { filtered, pretty, baseUrl } = parseArgs(argv);
 
+    if (filtered.length === 1 && (filtered[0] === '--help' || filtered[0] === '-h')) {
+      printUsage(io);
+      return 0;
+    }
+
     if (filtered.length < 2 || filtered[0] !== 'scan') {
       printUsage(io);
       return 1;

@@ -1,50 +1,41 @@
 # MoltBench CLI
 
-Command-line interface for interacting with the MoltBench scan lifecycle API.
+Command-line interface for interacting with the MoltBench HTTP API.
 
-## Install
+## Distribution
 
-npx (recommended):
+This repository is distributed via GitHub, not npm publish.
+
+## Install and run
+
+Install via npx:
+
+```bash
+npx -y github:twonthebuilder/moltbench-cli scan init --base-url https://moltbench.vercel.app
 ```
 
-npx moltbench scan init
+Or global install via git:
 
+```bash
+npm install -g git+https://github.com/twonthebuilder/moltbench-cli.git
 ```
 
-Global install:
-```
+Version pinning via tags:
 
-npm install -g moltbench-cli
-
+```bash
+npx -y github:twonthebuilder/moltbench-cli#v0.1.0 ...
 ```
 
 ## Usage
 
-Initialize a scan:
+```bash
+moltbench scan init --base-url https://moltbench.vercel.app
+moltbench scan status <scanId> --base-url https://moltbench.vercel.app
+moltbench scan results <scanId> --base-url https://moltbench.vercel.app
 ```
 
-moltbench scan init --base-url [https://moltbench.vercel.app](https://moltbench.vercel.app)
+## API endpoints used
 
-```
-
-Check status:
-```
-
-moltbench scan status <scanId> --base-url [https://moltbench.vercel.app](https://moltbench.vercel.app)
-
-```
-
-Fetch results:
-```
-
-moltbench scan results <scanId> --base-url [https://moltbench.vercel.app](https://moltbench.vercel.app)
-
-```
-
-## Notes
-
-- No authentication required (prototype phase).
-- API must expose:
-  - POST /api/scan/initiate
-  - GET /api/scan/status/:id
-  - GET /api/scan/results/:id
+- POST `/api/scan/initiate`
+- GET `/api/scan/status/:id`
+- GET `/api/scan/results/:id`
