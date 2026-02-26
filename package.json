@@ -1,0 +1,8 @@
+{
+  "name": "moltbench-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "moltbench": "cli.mjs"
+  }
+}
