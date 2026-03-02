@@ -159,7 +159,11 @@ export async function runCli(
   }
 }
 
-if (import.meta.url === `file://${globalThis.process.argv[1]}`) {
+// Resolve symlinks so npm bin links match import.meta.url
+import { realpathSync } from 'node:fs';
+
+const resolvedArgv = `file://${realpathSync(globalThis.process.argv[1])}`;
+if (import.meta.url === resolvedArgv) {
   const code = await runCli(globalThis.process.argv.slice(2));
   globalThis.process.exit(code);
 }
