@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -116,7 +116,21 @@ const getGitSelectedFiles = async ({ rootPath, includeUntracked }) => {
     const deduped = Array.from(new Set(selected));
     deduped.sort((left, right) => left.localeCompare(right));
 
-    return deduped.map((relPath) => path.resolve(rootPath, relPath));
+    const resolved = deduped.map((relPath) => path.resolve(rootPath, relPath));
+    const files = [];
+
+    for (const filePath of resolved) {
+      try {
+        const details = await stat(filePath);
+        if (details.isFile()) {
+          files.push(filePath);
+        }
+      } catch {
+        // Ignore paths that no longer exist.
+      }
+    }
+
+    return files;
   } catch {
     return null;
   }
