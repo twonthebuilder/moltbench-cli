@@ -1,8 +1,25 @@
 {
   "name": "moltbench-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "description": "MoltBench CLI — agent safety scanning from the command line",
   "type": "module",
   "bin": {
     "moltbench": "./cli.mjs"
+  },
+  "files": [
+    "cli.mjs",
+    "src/"
+  ],
+  "keywords": [
+    "moltbench",
+    "agent-safety",
+    "security-scanning",
+    "owasp",
+    "benchmark"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/twonthebuilder/moltbench-cli"
   }
 }
