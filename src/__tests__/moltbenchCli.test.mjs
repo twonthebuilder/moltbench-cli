@@ -785,6 +785,314 @@ test('agent attest can omit user id header and rely on server-side resolution', 
   }
 });
 
+const MODULE_PAYLOAD = {
+  modules: [
+    { id: 'secrets-leak', label: 'Secrets Leak Detection', tier: 1, description: 'Detects leaked credentials' },
+    { id: 'prompt-injection', label: 'Prompt Injection', tier: 2, description: 'Tests for prompt injection' }
+  ],
+  profiles: {
+    quick: { modules: ['secrets-leak'], description: 'Fast surface scan' },
+    standard: { modules: ['secrets-leak', 'prompt-injection'], description: 'Standard scan' },
+    deep: { modules: ['secrets-leak', 'prompt-injection'], description: 'Deep analysis' }
+  }
+};
+
+function makeModulesFetch(extra = {}) {
+  return async (url, init) => {
+    if (url.includes('/api/scan/modules')) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        async text() { return JSON.stringify(MODULE_PAYLOAD); }
+      };
+    }
+    if (extra.onOther) return extra.onOther(url, init);
+    return {
+      ok: true,
+      status: 202,
+      statusText: 'Accepted',
+      async text() { return JSON.stringify({ scanId: 'scan-1', state: 'queued' }); }
+    };
+  };
+}
+
+test('scan list-modules fetches modules endpoint and formats human-readable output', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      async text() { return JSON.stringify(MODULE_PAYLOAD); }
+    };
+  };
+
+  const logs = [];
+  const errors = [];
+  const code = await runCli(['scan', 'list-modules'], {
+    log: (line) => logs.push(line),
+    error: (line) => errors.push(line)
+  });
+
+  assert.equal(code, 0);
+  assert.equal(errors.length, 0);
+  assert.equal(requests[0].url, 'https://moltbench.vercel.app/api/scan/modules');
+  assert.equal(requests[0].init.method, 'GET');
+  assert.match(logs[0], /secrets-leak/);
+  assert.match(logs[0], /prompt-injection/);
+  assert.match(logs[0], /quick/);
+  assert.match(logs[0], /Modules:/);
+  assert.match(logs[0], /Profiles:/);
+});
+
+test('scan list-modules with --json returns raw JSON', async () => {
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    async text() { return JSON.stringify(MODULE_PAYLOAD); }
+  });
+
+  const logs = [];
+  const code = await runCli(['scan', 'list-modules', '--json'], {
+    log: (line) => logs.push(line),
+    error: () => {}
+  });
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(logs[0]), MODULE_PAYLOAD);
+});
+
+test('scan list-modules with --base-url uses custom url', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      async text() { return JSON.stringify(MODULE_PAYLOAD); }
+    };
+  };
+
+  const code = await runCli(['scan', 'list-modules', '--base-url', 'http://localhost:8787'], {
+    log: () => {},
+    error: () => {}
+  });
+
+  assert.equal(code, 0);
+  assert.equal(requests[0].url, 'http://localhost:8787/api/scan/modules');
+});
+
+test('scan quick --profile validates against server and includes profile in submit payload', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, init });
+    if (url.includes('/api/scan/modules')) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        async text() { return JSON.stringify(MODULE_PAYLOAD); }
+      };
+    }
+    return {
+      ok: true,
+      status: 202,
+      statusText: 'Accepted',
+      async text() { return JSON.stringify({ scanId: 'scan-profile-1', state: 'queued' }); }
+    };
+  };
+
+  const logs = [];
+  const errors = [];
+  const code = await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--profile', 'standard', '--submit', '--json'],
+    { log: (line) => logs.push(line), error: (line) => errors.push(line) }
+  );
+
+  assert.equal(code, 0);
+  assert.equal(errors.length, 0);
+  assert.match(requests[0].url, /\/api\/scan\/modules/);
+  assert.equal(requests[1].url, 'https://moltbench.vercel.app/api/scan/initiate');
+  const body = JSON.parse(requests[1].init.body);
+  assert.equal(body.profile, 'standard');
+  assert.equal(body.modules, undefined);
+});
+
+test('scan quick --modules validates and includes modules array in submit payload', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, init });
+    if (url.includes('/api/scan/modules')) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        async text() { return JSON.stringify(MODULE_PAYLOAD); }
+      };
+    }
+    return {
+      ok: true,
+      status: 202,
+      statusText: 'Accepted',
+      async text() { return JSON.stringify({ scanId: 'scan-modules-1', state: 'queued' }); }
+    };
+  };
+
+  const logs = [];
+  const errors = [];
+  const code = await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--modules', 'secrets-leak,prompt-injection', '--submit', '--json'],
+    { log: (line) => logs.push(line), error: (line) => errors.push(line) }
+  );
+
+  assert.equal(code, 0);
+  assert.equal(errors.length, 0);
+  const body = JSON.parse(requests[1].init.body);
+  assert.deepEqual(body.modules, ['secrets-leak', 'prompt-injection']);
+  assert.equal(body.profile, undefined);
+});
+
+test('scan quick --profile and --modules are mutually exclusive', async () => {
+  const logs = [];
+  const errors = [];
+  const code = await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--profile', 'quick', '--modules', 'secrets-leak'],
+    { log: (line) => logs.push(line), error: (line) => errors.push(line) }
+  );
+
+  assert.equal(code, 1);
+  assert.match(errors[0], /mutually exclusive/i);
+});
+
+test('scan quick --profile without --submit is rejected', async () => {
+  const errors = [];
+  const code = await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--profile', 'standard'],
+    { log: () => {}, error: (line) => errors.push(line) }
+  );
+
+  assert.equal(code, 1);
+  assert.match(errors[0], /only apply when --submit/i);
+});
+
+test('scan quick --modules without --submit is rejected', async () => {
+  const errors = [];
+  const code = await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--modules', 'secrets-leak'],
+    { log: () => {}, error: (line) => errors.push(line) }
+  );
+
+  assert.equal(code, 1);
+  assert.match(errors[0], /only apply when --submit/i);
+});
+
+test('scan quick --profile rejects invalid profile name', async () => {
+  globalThis.fetch = makeModulesFetch();
+
+  const errors = [];
+  const code = await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--profile', 'nonexistent', '--submit'],
+    { log: () => {}, error: (line) => errors.push(line) }
+  );
+
+  assert.equal(code, 1);
+  assert.match(errors[0], /invalid profile/i);
+});
+
+test('scan quick --modules rejects unknown module IDs', async () => {
+  globalThis.fetch = makeModulesFetch();
+
+  const errors = [];
+  const code = await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--modules', 'unknown-module', '--submit'],
+    { log: () => {}, error: (line) => errors.push(line) }
+  );
+
+  assert.equal(code, 1);
+  assert.match(errors[0], /unknown module/i);
+});
+
+test('scan init --profile includes profile in submit payload', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, init });
+    if (url.includes('/api/scan/modules')) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        async text() { return JSON.stringify(MODULE_PAYLOAD); }
+      };
+    }
+    return {
+      ok: true,
+      status: 202,
+      statusText: 'Accepted',
+      async text() { return JSON.stringify({ scanId: 'scan-init-profile-1', state: 'queued' }); }
+    };
+  };
+
+  const code = await runCli(
+    ['scan', 'init', '--profile', 'deep', '--json', '--base-url', 'http://localhost:8787'],
+    { log: () => {}, error: () => {} }
+  );
+
+  assert.equal(code, 0);
+  const initiateReq = requests.find((r) => r.url.includes('/api/scan/initiate'));
+  assert.ok(initiateReq);
+  const body = JSON.parse(initiateReq.init.body);
+  assert.equal(body.profile, 'deep');
+  assert.equal(body.modules, undefined);
+});
+
+test('scan init --modules includes modules array in submit payload', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, init });
+    if (url.includes('/api/scan/modules')) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        async text() { return JSON.stringify(MODULE_PAYLOAD); }
+      };
+    }
+    return {
+      ok: true,
+      status: 202,
+      statusText: 'Accepted',
+      async text() { return JSON.stringify({ scanId: 'scan-init-modules-1', state: 'queued' }); }
+    };
+  };
+
+  const code = await runCli(
+    ['scan', 'init', '--modules', 'secrets-leak', '--json', '--base-url', 'http://localhost:8787'],
+    { log: () => {}, error: () => {} }
+  );
+
+  assert.equal(code, 0);
+  const initiateReq = requests.find((r) => r.url.includes('/api/scan/initiate'));
+  assert.ok(initiateReq);
+  const body = JSON.parse(initiateReq.init.body);
+  assert.deepEqual(body.modules, ['secrets-leak']);
+  assert.equal(body.profile, undefined);
+});
+
+test('scan init --profile and --modules are mutually exclusive', async () => {
+  const errors = [];
+  const code = await runCli(
+    ['scan', 'init', '--profile', 'quick', '--modules', 'secrets-leak'],
+    { log: () => {}, error: (line) => errors.push(line) }
+  );
+
+  assert.equal(code, 1);
+  assert.match(errors[0], /mutually exclusive/i);
+});
+
 test('subcommand help exits early without calling APIs', async () => {
   let called = false;
   globalThis.fetch = async () => {
