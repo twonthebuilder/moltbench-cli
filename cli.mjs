@@ -94,15 +94,13 @@ function printUsage(io) {
   io.log(
     `MoltBench CLI\n\nUsage:\n` +
       `  moltbench scan capabilities [--base-url <url>] [--json]\n` +
+      `  moltbench scan list-modules [--base-url <url>] [--json]\n` +
       `  moltbench scan adapters [--install-missing] [--json]\n` +
-      `  moltbench scan init [--focus <focus-a,focus-b>] [--base-url <url>] [--json]
-` +
+      `  moltbench scan init [--focus <focus-a,focus-b>] [--profile <name>] [--modules <id,id>] [--base-url <url>] [--json]\n` +
       `  moltbench scan status <scanId> [--base-url <url>] [--json]\n` +
-      `  moltbench scan results <scanId> [--base-url <url>] [--json]
-  moltbench scan list [--limit <n>] [--base-url <url>] [--json]
-` +
-      `  moltbench scan quick --workspace <path> [--include-untracked] [--scope <tracked|workspace>] [--focus <focus-a,focus-b>] [--submit] [--json]
-` +
+      `  moltbench scan results <scanId> [--base-url <url>] [--json]\n` +
+      `  moltbench scan list [--limit <n>] [--base-url <url>] [--json]\n` +
+      `  moltbench scan quick --workspace <path> [--include-untracked] [--scope <tracked|workspace>] [--focus <focus-a,focus-b>] [--profile <name>] [--modules <id,id>] [--submit] [--json]\n` +
       `  moltbench agent pair --code <pairing-code> [--base-url <url>] [--json]\n` +
       `  moltbench agent rotate [--base-url <url>] [--json]\n` +
       `  moltbench agent revoke [--base-url <url>] [--json]\n` +
@@ -113,14 +111,15 @@ function printUsage(io) {
 function printSubcommandUsage(io, domain, subcommand) {
   const usage = {
     'scan.capabilities': 'moltbench scan capabilities [--base-url <url>] [--json]',
+    'scan.list-modules': 'moltbench scan list-modules [--base-url <url>] [--json]',
     'scan.adapters': 'moltbench scan adapters [--install-missing] [--json]',
     'scan.init':
-      'moltbench scan init [--mode <hosted|local>] [--target <path-or-url>] [--adapters <id,id>] [--install-missing] [--focus <focus-a,focus-b>] [--base-url <url>] [--json]',
+      'moltbench scan init [--mode <hosted|local>] [--target <path-or-url>] [--adapters <id,id>] [--install-missing] [--focus <focus-a,focus-b>] [--profile <name>] [--modules <id,id>] [--base-url <url>] [--json]',
     'scan.status': 'moltbench scan status <scanId> [--base-url <url>] [--json]',
     'scan.results': 'moltbench scan results <scanId> [--base-url <url>] [--json]',
     'scan.list': 'moltbench scan list [--limit <n>] [--base-url <url>] [--json]',
     'scan.quick':
-      'moltbench scan quick --workspace <path> [--include-untracked] [--scope <tracked|workspace>] [--focus <focus-a,focus-b>] [--submit] [--json]',
+      'moltbench scan quick --workspace <path> [--include-untracked] [--scope <tracked|workspace>] [--focus <focus-a,focus-b>] [--profile <name>] [--modules <id,id>] [--submit] [--json]',
     'agent.pair': 'moltbench agent pair --code <pairing-code> [--base-url <url>] [--json]',
     'agent.rotate': 'moltbench agent rotate [--base-url <url>] [--json]',
     'agent.revoke': 'moltbench agent revoke [--base-url <url>] [--json]',
@@ -309,6 +308,43 @@ function formatStatusResponse(payload) {
   ].join('\n');
 }
 
+function formatModules(payload) {
+  const lines = [];
+  const modules = payload.modules ?? [];
+  const profiles = payload.profiles ?? {};
+
+  // Group modules by tier
+  const byTier = {};
+  for (const mod of modules) {
+    const tier = mod.tier ?? 'unknown';
+    if (!byTier[tier]) byTier[tier] = [];
+    byTier[tier].push(mod);
+  }
+
+  lines.push('Modules:');
+  for (const [tier, mods] of Object.entries(byTier).sort()) {
+    lines.push(`  [Tier ${tier}]`);
+    for (const mod of mods) {
+      lines.push(`  - ${mod.id}  (${mod.label})`);
+      if (mod.description) lines.push(`    ${mod.description}`);
+    }
+  }
+
+  const profileNames = Object.keys(profiles);
+  if (profileNames.length > 0) {
+    lines.push('');
+    lines.push('Profiles:');
+    for (const [name, profile] of Object.entries(profiles)) {
+      lines.push(`  ${name}: ${profile.description ?? ''}`);
+      if (Array.isArray(profile.modules)) {
+        lines.push(`    modules: ${profile.modules.join(', ')}`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
 // ── Hosted summary target ───────────────────────────────────────────
 
 function createHostedSummaryTarget() {
@@ -442,6 +478,46 @@ function createQuickSubmitTarget(options) {
 
 async function resolveWorkspacePath(workspace) {
   return path.resolve(workspace);
+}
+
+async function fetchModulesData(baseUrl) {
+  const response = await globalThis.fetch(`${baseUrl}/api/scan/modules`, { method: 'GET' });
+  const payload = await parseJsonBody(response);
+  if (!response.ok) {
+    const msg =
+      typeof payload === 'object' && payload
+        ? (payload.error ?? payload.message ?? JSON.stringify(payload))
+        : String(payload);
+    throw new Error(`Failed to fetch modules (${response.status} ${response.statusText}): ${msg}`);
+  }
+  return payload;
+}
+
+function validateProfile(profileName, modulesData) {
+  const validProfiles = Object.keys(modulesData.profiles ?? {});
+  if (!validProfiles.includes(profileName)) {
+    throw new Error(
+      `Invalid profile "${profileName}". Valid profiles: ${validProfiles.join(', ')}`
+    );
+  }
+}
+
+function validateModuleIds(moduleIds, modulesData) {
+  const validIds = new Set((modulesData.modules ?? []).map((m) => m.id));
+  const invalid = moduleIds.filter((id) => !validIds.has(id));
+  if (invalid.length > 0) {
+    throw new Error(
+      `Unknown module IDs: ${invalid.join(', ')}. Run "scan list-modules" to see available modules.`
+    );
+  }
+}
+
+function parseModuleIds(value) {
+  if (typeof value !== 'string' || !value.trim()) return [];
+  return value
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
 }
 
 // ── Main CLI ────────────────────────────────────────────────────────
@@ -724,6 +800,29 @@ export async function runCli(
       return 0;
     }
 
+    if (subcommand === 'list-modules') {
+      const endpoint = `${baseUrl}/api/scan/modules`;
+      const response = await globalThis.fetch(endpoint, { method: 'GET' });
+      const payload = await parseJsonBody(response);
+
+      if (!response.ok) {
+        io.error(`Request failed (${response.status} ${response.statusText})`);
+        io.error(
+          typeof payload === 'object' && payload
+            ? (payload.error ?? payload.message ?? JSON.stringify(payload))
+            : JSON.stringify(payload)
+        );
+        return 1;
+      }
+
+      if (json) {
+        io.log(JSON.stringify(payload));
+      } else {
+        io.log(formatModules(payload));
+      }
+      return 0;
+    }
+
     if (subcommand === 'quick') {
       const workspace = consumeValueFlag(rest, '--workspace');
       if (!workspace) {
@@ -737,6 +836,20 @@ export async function runCli(
       const focusValue = consumeValueFlag(rest, '--focus');
       const focus = parseFocusFlagValue(focusValue);
       const submit = consumeFlag(rest, '--submit');
+      const profile = consumeValueFlag(rest, '--profile');
+      const modulesRaw = consumeValueFlag(rest, '--modules');
+      const modules = modulesRaw ? parseModuleIds(modulesRaw) : null;
+
+      if (profile && modules) {
+        io.error('--profile and --modules are mutually exclusive');
+        return 1;
+      }
+
+      if (profile || modules) {
+        const modulesData = await fetchModulesData(baseUrl);
+        if (profile) validateProfile(profile, modulesData);
+        if (modules) validateModuleIds(modules, modulesData);
+      }
 
       const trackedFilesOnly = !includeUntracked;
       const includeWorkspaceScope = scope === 'workspace';
@@ -790,6 +903,8 @@ export async function runCli(
           body: JSON.stringify({
             mode: 'private_ephemeral',
             target,
+            ...(profile ? { profile } : {}),
+            ...(modules ? { modules } : {}),
             metadata: {
               agent: 'moltbench-cli',
               runLabel: 'local-quick-submit'
@@ -848,6 +963,19 @@ export async function runCli(
       const adapterIds = normalizeAdapterIds(consumeValueFlag(rest, '--adapters'));
       const installMissing = consumeFlag(rest, '--install-missing');
       const focusInput = parseFocusFlagValue(consumeValueFlag(rest, '--focus'));
+      const profile = consumeValueFlag(rest, '--profile');
+      const modulesRaw = consumeValueFlag(rest, '--modules');
+      const modules = modulesRaw ? parseModuleIds(modulesRaw) : null;
+
+      if (profile && modules) {
+        throw new Error('--profile and --modules are mutually exclusive');
+      }
+
+      if (profile || modules) {
+        const modulesData = await fetchModulesData(baseUrl);
+        if (profile) validateProfile(profile, modulesData);
+        if (modules) validateModuleIds(modules, modulesData);
+      }
 
       if (!['hosted', 'local'].includes(mode)) {
         throw new Error('scan init --mode must be either "hosted" or "local"');
@@ -910,6 +1038,8 @@ export async function runCli(
         body: JSON.stringify({
           mode: 'private_ephemeral',
           target,
+          ...(profile ? { profile } : {}),
+          ...(modules ? { modules } : {}),
           metadata: {
             agent: 'moltbench-cli',
             ...(focusInput.length > 0 ? { scan_focus: focusInput } : {})
@@ -1003,8 +1133,6 @@ export async function runCli(
 }
 
 // Resolve symlinks so npm bin links match import.meta.url
-import { realpathSync } from 'node:fs';
-
 const resolvedArgv = `file://${realpathSync(globalThis.process.argv[1])}`;
 if (import.meta.url === resolvedArgv) {
   const code = await runCli(globalThis.process.argv.slice(2));
