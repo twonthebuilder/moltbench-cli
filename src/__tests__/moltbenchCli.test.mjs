@@ -968,12 +968,34 @@ test('scan quick --profile and --modules are mutually exclusive', async () => {
   assert.match(errors[0], /mutually exclusive/i);
 });
 
+test('scan quick --profile without --submit is rejected', async () => {
+  const errors = [];
+  const code = await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--profile', 'standard'],
+    { log: () => {}, error: (line) => errors.push(line) }
+  );
+
+  assert.equal(code, 1);
+  assert.match(errors[0], /only apply when --submit/i);
+});
+
+test('scan quick --modules without --submit is rejected', async () => {
+  const errors = [];
+  const code = await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--modules', 'secrets-leak'],
+    { log: () => {}, error: (line) => errors.push(line) }
+  );
+
+  assert.equal(code, 1);
+  assert.match(errors[0], /only apply when --submit/i);
+});
+
 test('scan quick --profile rejects invalid profile name', async () => {
   globalThis.fetch = makeModulesFetch();
 
   const errors = [];
   const code = await runCli(
-    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--profile', 'nonexistent'],
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--profile', 'nonexistent', '--submit'],
     { log: () => {}, error: (line) => errors.push(line) }
   );
 
@@ -986,7 +1008,7 @@ test('scan quick --modules rejects unknown module IDs', async () => {
 
   const errors = [];
   const code = await runCli(
-    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--modules', 'unknown-module'],
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--modules', 'unknown-module', '--submit'],
     { log: () => {}, error: (line) => errors.push(line) }
   );
 

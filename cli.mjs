@@ -801,20 +801,7 @@ export async function runCli(
     }
 
     if (subcommand === 'list-modules') {
-      const endpoint = `${baseUrl}/api/scan/modules`;
-      const response = await globalThis.fetch(endpoint, { method: 'GET' });
-      const payload = await parseJsonBody(response);
-
-      if (!response.ok) {
-        io.error(`Request failed (${response.status} ${response.statusText})`);
-        io.error(
-          typeof payload === 'object' && payload
-            ? (payload.error ?? payload.message ?? JSON.stringify(payload))
-            : JSON.stringify(payload)
-        );
-        return 1;
-      }
-
+      const payload = await fetchModulesData(baseUrl);
       if (json) {
         io.log(JSON.stringify(payload));
       } else {
@@ -845,10 +832,9 @@ export async function runCli(
         return 1;
       }
 
-      if (profile || modules) {
-        const modulesData = await fetchModulesData(baseUrl);
-        if (profile) validateProfile(profile, modulesData);
-        if (modules) validateModuleIds(modules, modulesData);
+      if ((profile || modules) && !submit) {
+        io.error('--profile and --modules only apply when --submit is used');
+        return 1;
       }
 
       const trackedFilesOnly = !includeUntracked;
@@ -889,6 +875,12 @@ export async function runCli(
         const submitAuthHeaders = submitCredential?.apiKey
           ? { Authorization: `Bearer ${submitCredential.apiKey}` }
           : {};
+
+        if (profile || modules) {
+          const modulesData = await fetchModulesData(baseUrl);
+          if (profile) validateProfile(profile, modulesData);
+          if (modules) validateModuleIds(modules, modulesData);
+        }
 
         const target = createQuickSubmitTarget({
           scope,
