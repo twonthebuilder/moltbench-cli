@@ -1002,7 +1002,8 @@ export async function runCli(
   }
 }
 
-// ── Entry point (resolves symlinks for npm bin compatibility) ──────
+// Resolve symlinks so npm bin links match import.meta.url
+import { realpathSync } from 'node:fs';
 
 const resolvedArgv = `file://${realpathSync(globalThis.process.argv[1])}`;
 if (import.meta.url === resolvedArgv) {
