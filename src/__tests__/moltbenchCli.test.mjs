@@ -230,8 +230,12 @@ test('scan quick submit is opt-in and sends only redacted aggregate summary fiel
   ]);
   assert.deepEqual(requestPayload.target.summary.raw, []);
   assert.equal(requestPayload.target.summary.target, 'runner://moltbench-cli/local-quick');
-  assert.deepEqual(requestPayload.target.summary.findings, []);
-  assert.equal(requestPayload.target.summary.metadata.counts.findings_total, 0);
+  assert.ok(requestPayload.target.summary.findings.length > 0);
+  assert.equal(
+    requestPayload.target.summary.metadata.counts.findings_total,
+    requestPayload.target.summary.findings.length
+  );
+  assert.ok('by_severity' in requestPayload.target.summary.metadata.counts);
   assert.equal(requestPayload.target.summary.metadata.options.scope, 'tracked');
   assert.equal(requestPayload.target.summary.metadata.options.include_untracked, false);
   assert.equal(requestPayload.target.summary.metadata.options.tracked_files_only, true);
@@ -241,6 +245,113 @@ test('scan quick submit is opt-in and sends only redacted aggregate summary fiel
   const responsePayload = JSON.parse(logs[0]);
   assert.equal(responsePayload.submit, true);
   assert.equal(responsePayload.submission.scanId, 'scan-submit-1');
+});
+
+test('scan quick submit redacts privacy-sensitive fields from findings', async () => {
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 202,
+    statusText: 'Accepted',
+    async text() { return JSON.stringify({ scanId: 'scan-redact-1', state: 'queued' }); }
+  });
+
+  const requests = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, init });
+    return origFetch(url, init);
+  };
+
+  const logs = [];
+  await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--submit', '--json'],
+    { log: (line) => logs.push(line), error: () => {} }
+  );
+
+  const body = JSON.parse(requests[0].init.body);
+  const findings = body.target.summary.findings;
+  assert.ok(findings.length > 0);
+  for (const f of findings) {
+    assert.ok(!('file' in f), 'finding must not contain file');
+    assert.ok(!('line' in f), 'finding must not contain line');
+    assert.ok(!('evidence' in f), 'finding must not contain evidence');
+    assert.ok(!('reason' in f), 'finding must not contain reason');
+    assert.ok(!('focus' in f), 'finding must not contain focus');
+    assert.ok('id' in f, 'finding must have id');
+    assert.ok('category' in f, 'finding must have category');
+    assert.ok('severity' in f, 'finding must have severity');
+    assert.ok('title' in f, 'finding must have title');
+    assert.equal(f.result, 'fail', 'finding must have result: fail');
+  }
+});
+
+test('scan quick submit maps focus to category correctly', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, init });
+    return {
+      ok: true,
+      status: 202,
+      statusText: 'Accepted',
+      async text() { return JSON.stringify({ scanId: 'scan-cat-1', state: 'queued' }); }
+    };
+  };
+
+  const logs = [];
+  await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--submit', '--json'],
+    { log: (line) => logs.push(line), error: () => {} }
+  );
+
+  const body = JSON.parse(requests[0].init.body);
+  const findings = body.target.summary.findings;
+  // createQuickWorkspace has no SECURITY.md and no lockfile
+  // → security_md_presence → code-safety
+  // → lockfile_hygiene → code-safety
+  for (const f of findings) {
+    assert.ok(
+      ['exposed-secrets', 'code-safety'].includes(f.category),
+      `unexpected category: ${f.category}`
+    );
+  }
+});
+
+test('scan quick submit keeps raw empty regardless of local scan raw data', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, init });
+    return {
+      ok: true,
+      status: 202,
+      statusText: 'Accepted',
+      async text() { return JSON.stringify({ scanId: 'scan-raw-1', state: 'queued' }); }
+    };
+  };
+
+  const logs = [];
+  await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--submit', '--json'],
+    { log: (line) => logs.push(line), error: () => {} }
+  );
+
+  const body = JSON.parse(requests[0].init.body);
+  assert.deepEqual(body.target.summary.raw, []);
+});
+
+test('scan quick without --submit does not alter local findings output', async () => {
+  const logs = [];
+  await runCli(
+    ['scan', 'quick', '--workspace', await createQuickWorkspace(), '--json'],
+    { log: (line) => logs.push(line), error: () => {} }
+  );
+
+  const result = JSON.parse(logs[0]);
+  assert.ok(Array.isArray(result.findings));
+  assert.ok(result.findings.length > 0);
+  // local output includes full finding fields
+  const f = result.findings[0];
+  assert.ok('focus' in f, 'local output should retain focus field');
+  assert.ok('reason' in f, 'local output should retain reason field');
 });
 
 test('scan quick with no local args prints usage and exits 1', async () => {

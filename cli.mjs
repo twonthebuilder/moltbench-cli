@@ -449,8 +449,35 @@ function toRedactedHostedFindings(adapterReport) {
   return findings;
 }
 
+const FOCUS_TO_CATEGORY = {
+  secrets_detection: 'exposed-secrets',
+  repo_risk_signals: 'code-safety',
+  lockfile_hygiene: 'code-safety',
+  security_md_presence: 'code-safety',
+  dependency_risk: 'code-safety'
+};
+
+function redactLocalFindingsForSubmit(findings) {
+  return (findings ?? []).map((f) => ({
+    id: f.id,
+    category: FOCUS_TO_CATEGORY[f.focus] ?? f.focus,
+    severity: f.severity,
+    title: f.title,
+    result: 'fail'
+  }));
+}
+
+function countBySeverity(findings) {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const f of findings) {
+    if (f.severity in counts) counts[f.severity]++;
+  }
+  return counts;
+}
+
 function createQuickSubmitTarget(options) {
   const now = Date.now();
+  const redacted = redactLocalFindingsForSubmit(options.findings);
   return {
     type: 'hosted_summary',
     summary: {
@@ -458,10 +485,10 @@ function createQuickSubmitTarget(options) {
       schema_version: '1.0',
       generated_at: new Date().toISOString(),
       target: 'runner://moltbench-cli/local-quick',
-      findings: [],
+      findings: redacted,
       raw: [],
       metadata: {
-        counts: { findings_total: 0 },
+        counts: { findings_total: redacted.length, by_severity: countBySeverity(redacted) },
         options: {
           scope: options.scope,
           include_untracked: options.includeUntracked,
@@ -885,7 +912,8 @@ export async function runCli(
         const target = createQuickSubmitTarget({
           scope,
           includeUntracked,
-          trackedFilesOnly
+          trackedFilesOnly,
+          findings: localScan.findings
         });
 
         const endpoint = `${baseUrl}/api/scan/initiate`;
