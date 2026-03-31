@@ -4,6 +4,7 @@ import { realpathSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import process from 'node:process';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_SCAN_POLL_MAX_WAIT_MS,
   DEFAULT_SCAN_POLL_RETRY_AFTER_MS
@@ -14,6 +15,10 @@ import { adapterRegistry, runAdapterScan } from './src/adapters/ScanOrchestrator
 import { execFileSync } from 'node:child_process';
 
 const DEFAULT_BASE_URL = 'https://moltbench.vercel.app';
+
+const CLI_VERSION = JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf8')
+).version;
 
 // ── Credential paths ────────────────────────────────────────────────
 
@@ -104,6 +109,7 @@ function printUsage(io) {
       `  moltbench agent pair --code <pairing-code> [--base-url <url>] [--json]\n` +
       `  moltbench agent rotate [--base-url <url>] [--json]\n` +
       `  moltbench agent revoke [--base-url <url>] [--json]\n` +
+      `  moltbench agent status [--base-url <url>] [--json]\n` +
       `  moltbench agent attest (--run-id <runId> | --audit-id <auditId>) [--moltbench-user-id <userId>] [--resubmit] [--yes] [--base-url <url>] [--json]`
   );
 }
@@ -123,6 +129,7 @@ function printSubcommandUsage(io, domain, subcommand) {
     'agent.pair': 'moltbench agent pair --code <pairing-code> [--base-url <url>] [--json]',
     'agent.rotate': 'moltbench agent rotate [--base-url <url>] [--json]',
     'agent.revoke': 'moltbench agent revoke [--base-url <url>] [--json]',
+    'agent.status': 'moltbench agent status [--base-url <url>] [--json]',
     'agent.attest':
       'moltbench agent attest (--run-id <runId> | --audit-id <auditId>) [--moltbench-user-id <userId>] [--resubmit] [--yes] [--base-url <url>] [--json]'
   };
@@ -476,16 +483,15 @@ function countBySeverity(findings) {
 }
 
 function createQuickSubmitTarget(options) {
-  const now = Date.now();
   const redacted = redactLocalFindingsForSubmit(options.findings);
   return {
     type: 'hosted_summary',
     summary: {
-      runner_version: 'moltbench-cli@0.1.0',
+      runner_version: `moltbench-cli@${CLI_VERSION}`,
       schema_version: '1.0',
       generated_at: new Date().toISOString(),
       target: 'runner://moltbench-cli/local-quick',
-      findings: redacted,
+      findings: [],
       raw: [],
       metadata: {
         counts: { findings_total: redacted.length, by_severity: countBySeverity(redacted) },
@@ -496,8 +502,8 @@ function createQuickSubmitTarget(options) {
         }
       },
       provenance: {
-        run_id: `moltbench-cli-local-quick-${now}`,
-        nonce: `moltbench-cli-local-quick-${now}`
+        run_id: randomUUID(),
+        nonce: randomUUID()
       }
     }
   };
@@ -693,6 +699,47 @@ export async function runCli(
           io.log('Agent key revoked successfully.');
           io.log(`agentId: ${payload?.agentId ?? 'unknown'}`);
           io.log(`keyId: ${payload?.keyId ?? 'unknown'}`);
+        }
+        return 0;
+      }
+
+      if (subcommand === 'status') {
+        const credential = await loadAgentCredential();
+        const endpoint = `${baseUrl}/api/agents/list`;
+        const response = await globalThis.fetch(endpoint, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${credential.apiKey}` }
+        });
+        const payload = await parseJsonBody(response);
+
+        if (!response.ok) {
+          io.error(`Agent status check failed (${response.status} ${response.statusText})`);
+          io.error(
+            typeof payload === 'object' && payload && 'error' in payload
+              ? payload.error
+              : JSON.stringify(payload)
+          );
+          return 1;
+        }
+
+        if (json) {
+          io.log(JSON.stringify(payload));
+        } else {
+          const agents = Array.isArray(payload?.agents) ? payload.agents : (payload ? [payload] : []);
+          if (agents.length === 0) {
+            io.log('No agents found.');
+          } else {
+            for (const agent of agents) {
+              io.log(`agentId: ${agent.agentId ?? 'unknown'}`);
+              io.log(`keyStatus: ${agent.keyStatus ?? agent.status ?? 'unknown'}`);
+              if (agent.lastScan) {
+                io.log(`lastScan: ${agent.lastScan.scanId ?? 'unknown'} (${agent.lastScan.createdAt ?? ''})`);
+              }
+              if (agent.scanFocus) {
+                io.log(`scanFocus: ${JSON.stringify(agent.scanFocus)}`);
+              }
+            }
+          }
         }
         return 0;
       }
