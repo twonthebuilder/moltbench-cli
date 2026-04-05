@@ -101,13 +101,13 @@ test('error response prints message and exits 1', async () => {
     status: 404,
     statusText: 'Not Found',
     async text() {
-      return JSON.stringify({ message: 'Scan scan-missing was not found.' });
+      return JSON.stringify({ message: 'Scan scan-fake-missing was not found.' });
     }
   });
 
   const logs = [];
   const errors = [];
-  const code = await runCli(['scan', 'results', 'scan-missing', '--json'], {
+  const code = await runCli(['scan', 'results', 'scan-fake-missing', '--json'], {
     log: (line) => logs.push(line),
     error: (line) => errors.push(line)
   });
@@ -115,7 +115,7 @@ test('error response prints message and exits 1', async () => {
   assert.equal(code, 1);
   assert.equal(logs.length, 0);
   assert.match(errors[0], /404/);
-  assert.match(errors[0], /Scan scan-missing was not found\./);
+  assert.match(errors[0], /Scan scan-fake-missing was not found\./);
 });
 
 test('scan quick parses local options and does not call fetch', async () => {
@@ -743,7 +743,7 @@ test('scan results poller times out with actionable error when server never exit
   try {
     const logs = [];
     const errors = [];
-    const code = await runCli(['scan', 'results', 'scan-timeout'], {
+    const code = await runCli(['scan', 'results', 'scan-fake-timeout'], {
       log: (line) => logs.push(line),
       error: (line) => errors.push(line)
     });
