@@ -16,6 +16,8 @@ import { execFileSync } from 'node:child_process';
 
 const DEFAULT_BASE_URL = 'https://moltbench.vercel.app';
 
+const SCAN_ID_RE = /^scan-[a-z0-9]+-[a-z0-9]+$/;
+
 const CLI_VERSION = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf8')
 ).version;
@@ -57,7 +59,7 @@ async function loadAgentCredential() {
 function saveAgentCredential(data) {
   const filePath = agentKeyPath();
   mkdirSync(path.dirname(filePath), { recursive: true });
-  writeFileSync(filePath, JSON.stringify(data, null, 2));
+  writeFileSync(filePath, JSON.stringify(data, null, 2), { mode: 0o600 });
 }
 
 async function loadCliState() {
@@ -73,7 +75,7 @@ async function loadCliState() {
 
 async function saveCliState(statePath, state) {
   mkdirSync(path.dirname(statePath), { recursive: true });
-  writeFileSync(statePath, JSON.stringify(state, null, 2));
+  writeFileSync(statePath, JSON.stringify(state, null, 2), { mode: 0o600 });
 }
 
 // ── Default confirm (stdin) ─────────────────────────────────────────
@@ -553,6 +555,52 @@ function parseModuleIds(value) {
     .filter(Boolean);
 }
 
+// ── Env var validation ──────────────────────────────────────────────
+
+// Valid binary name or absolute path: letters, digits, underscores, dots,
+// hyphens, and forward-slashes only. No spaces, semicolons, etc.
+const SAFE_BIN_RE = /^[a-zA-Z0-9_./-]+$/;
+
+/**
+ * Validates MOLTBENCH_* environment variables at startup and returns false
+ * (with an error message) if any configured value is structurally invalid.
+ * Only structural checks are done here (no NUL bytes, safe binary name);
+ * existence checks are deferred to the point of use.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @param {{ log: Function, error: Function }} io
+ * @returns {boolean} false means the caller should exit 1
+ */
+function validateEnvVars(env, io) {
+  let ok = true;
+
+  const agentKeyPath = env.MOLTBENCH_AGENT_KEY_PATH;
+  if (agentKeyPath !== undefined) {
+    if (!agentKeyPath || agentKeyPath.includes('\0')) {
+      io.error(
+        `Invalid MOLTBENCH_AGENT_KEY_PATH: value is empty or contains a NUL byte. Unset the variable or provide a valid file path.`
+      );
+      ok = false;
+    }
+  }
+
+  for (const varName of [
+    'MOLTBENCH_GARAK_PYTHON_BIN',
+    'MOLTBENCH_PROMPTGUARD_PYTHON_BIN',
+    'MOLTBENCH_AGENTHARM_PYTHON_BIN'
+  ]) {
+    const value = env[varName];
+    if (value !== undefined && !SAFE_BIN_RE.test(value)) {
+      io.error(
+        `Invalid ${varName}: "${value}" is not a safe binary name or path. Only letters, digits, underscores, dots, hyphens, and forward-slashes are allowed.`
+      );
+      ok = false;
+    }
+  }
+
+  return ok;
+}
+
 // ── Main CLI ────────────────────────────────────────────────────────
 
 export async function runCli(
@@ -561,6 +609,10 @@ export async function runCli(
 ) {
   try {
     const { filtered, json, pretty, baseUrl } = parseArgs(argv);
+
+    if (!validateEnvVars(globalThis.process.env, io)) {
+      return 1;
+    }
 
     if (filtered.length === 1 && (filtered[0] === '--help' || filtered[0] === '-h')) {
       printUsage(io);
@@ -1116,10 +1168,18 @@ export async function runCli(
     } else if (subcommand === 'status') {
       const scanId = rest[0];
       if (!scanId) throw new Error('scan status requires <scanId>');
+      if (!SCAN_ID_RE.test(scanId)) {
+        io.error(`Invalid scan ID "${scanId}". Expected format: scan-<id>-<id>`);
+        return 1;
+      }
       endpoint = `${baseUrl}/api/scan/status/${encodeURIComponent(scanId)}`;
     } else if (subcommand === 'results') {
       const scanId = rest[0];
       if (!scanId) throw new Error('scan results requires <scanId>');
+      if (!SCAN_ID_RE.test(scanId)) {
+        io.error(`Invalid scan ID "${scanId}". Expected format: scan-<id>-<id>`);
+        return 1;
+      }
       endpoint = `${baseUrl}/api/scan/results/${encodeURIComponent(scanId)}`;
     } else if (subcommand === 'list') {
       const limitRaw = consumeValueFlag(rest, '--limit');

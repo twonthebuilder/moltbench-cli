@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { BenchmarkAdapter } from '../AdapterInterface.mjs';
+import { buildSubprocessEnv } from '../subprocessEnv.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -116,7 +117,7 @@ export class GarakAdapter extends BenchmarkAdapter {
 
     const start = Date.now();
     try {
-      await runCommand(pythonBin, args, { env: process.env });
+      await runCommand(pythonBin, args, { env: buildSubprocessEnv(process.env) });
     } catch (error) {
       const stderr = error?.stderr ? ` ${String(error.stderr).trim()}` : '';
       throw new Error(`Garak execution failed.${stderr}`.trim());

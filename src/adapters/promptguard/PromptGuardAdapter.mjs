@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { buildSubprocessEnv } from '../subprocessEnv.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -99,7 +100,7 @@ export class PromptGuardAdapter extends BenchmarkAdapter {
 
     const start = Date.now();
     try {
-      await runCommand(pythonBin, args, { env: process.env });
+      await runCommand(pythonBin, args, { env: buildSubprocessEnv(process.env) });
     } catch (error) {
       const stderr = error?.stderr ? ` ${String(error.stderr).trim()}` : '';
       throw new Error(`Prompt Guard execution failed.${stderr}`.trim());
